@@ -1,5 +1,11 @@
 Revision history for Perl extension Quantum::Entanglement.
 
+0.25 - Sat Feb 03 2001 23:00:00
+
+Changes    ~ Removed some duplicated internal code
+           + show_states now "official" and gives useful output, can be
+             invoked as object method.
+
 0.23 - Thu Jan 25 2001 00:00:00
 
 Changes    + Quantum Fourier Transform (QFT) function added

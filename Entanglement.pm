@@ -8,7 +8,7 @@ BEGIN {
   use Math::Complex;
   my @M_Complex = qw(i Re Im rho theta arg cplx cplxe);
   our ($VERSION, @ISA, @EXPORT, @EXPORT_OK, %EXPORT_TAGS);
-  $VERSION     = 0.24;
+  $VERSION     = 0.25;
   @ISA         = qw(Exporter);
   @EXPORT      = qw(&entangle &p_op &p_func &q_logic
 		    &save_state &restore_state);
@@ -19,7 +19,7 @@ BEGIN {
 }
 our (@EXPORT_OK, @EXPORT);
 
-$Quantum::Entanglement::destroy = 1; # true=> states that are no longer valid
+$Quantum::Entanglement::destroy = 1; # true=> p(0) states stomped on
 $Quantum::Entanglement::conform = 0; # true=> strives for truth when observing
 
 ## Contents:
@@ -110,7 +110,7 @@ sub entangle {
   else { # adding another variable to the state space
     my $var = _new;
     # copy the current state space
-    my @space_copy = map {[@$_],} @$states;
+    my @space_copy = @$states;
     $states = [];
     while (my $prob = shift) {
       my $val = shift;
@@ -127,9 +127,26 @@ sub entangle {
 # a view of global state space, might still show historical states which
 # are no longer accessable, does not count as observation
 sub show_states {
-  foreach my $state (@$states) {
-    print((map {ref($_) && UNIVERSAL::isa($_, 'Math::Complex') ?
-	      $_ : "|$_>\t"} @$state), "\n");
+  my $rt;
+  if (ref($_[0]) && UNIVERSAL::isa($_[0], 'Quantum::Entanglement')) {
+    while (@_) { # we assume all args are Q::E vars if the first is...
+      my $os = $_[0]->[0];
+      foreach (@$states) {
+	my($prob, $val) = @{$_}[$os-1,$os];
+	$rt .= "$prob|$val> + ";
+      }
+      substr($rt,-3,3,"\n");
+      shift;
+    }
+    return $rt;
+  }
+  else {
+    foreach my $state (@$states) {
+      my $temp = 0;
+      $rt .= ($temp++ % 2) ? "$_>\t" : "$_|" foreach @$state;
+      substr($rt,-1,1,"\n");
+    }
+    return $rt;
   }
 }
 
@@ -157,7 +174,7 @@ sub _normalise {
   else {
     my $cum;
     @{$h2}{ @{$muts} } = map {$cum +=abs($_)**2;
-			      $cum / $sum} @{$hr}{ @{$muts} };
+			      $cum / $sum       } @{$hr}{ @{$muts} };
     return ($h2, $muts);
   }
 }
@@ -183,7 +200,7 @@ sub _rationalise_states {
 	  $tref->{$val} = [@{$state}[@p_os]];
 	}
       }
-      else {
+      else { # an intermediate level
 	if (exists $tref->{$val}) {
 	  $tref = $tref->{$val};
 	}
@@ -265,14 +282,14 @@ use overload
   'gt' => sub { bioop(@_, sub{$_[0] gt $_[1]} ) },
   'eq' => sub { bioop(@_, sub{$_[0] eq $_[1]} ) },
   'ne' => sub { bioop(@_, sub{$_[0] ne $_[1]} ) },
-  '<=>'=> sub { bicmp(@_, sub{$_[0] <=>$_[1]} ) },
-  'cmp'=> sub { bicmp(@_, sub{$_[0] cmp$_[1]} ) },
-  'cos'=> sub { bltin(@_, sub{ cos $_[0]} ) },
-  'sin'=> sub { bltin(@_, sub{ sin $_[0]} ) },
-  'exp'=> sub { bltin(@_, sub{ exp $_[0]} ) },
-  'abs'=> sub { bltin(@_, sub{ abs $_[0]} ) },
-  'log'=> sub { bltin(@_, sub{ log $_[0]} ) },
-  'sqrt'=>sub { bltin(@_, sub{ sqrt $_[0]}) },
+  '<=>'=> sub { binop(@_, sub{$_[0] <=>$_[1]} ) },
+  'cmp'=> sub { binop(@_, sub{$_[0] cmp$_[1]} ) },
+  'cos'=> sub { unnop($_[0], sub{ cos $_[0]} ) },
+  'sin'=> sub { unnop($_[0], sub{ sin $_[0]} ) },
+  'exp'=> sub { unnop($_[0], sub{ exp $_[0]} ) },
+  'abs'=> sub { unnop($_[0], sub{ abs $_[0]} ) },
+  'log'=> sub { unnop($_[0], sub{ log $_[0]} ) },
+  'sqrt'=>sub { unnop($_[0], sub{ sqrt $_[0]}) },
 
   'bool'=> \&bool_ent, q{""}  => \&str_ent,  '0+' => \&num_ent,
   '='   => \&copy_ent,
@@ -550,97 +567,34 @@ sub unnop {
   return $val;
 }
 
-# any BInary CMP
-sub bicmp {
-  my ($c, $d, $reverse, $code) = @_;
-  my $rt = 0;
-  my $os = $c->[0];
-  my $var = _new;
-
-  if (ref($d) && UNIVERSAL::isa($d, 'Quantum::Entanglement')) {
-    my $osd = $d->[0];
-    foreach (0..(@$states-1)) {
-      my $state = $states->[$_];
-      my $d2 = $state->[$osd];
-      my $c2 = $state->[$os];
-      push @$state, ($state->[$os-1]* $state->[$osd-1],
-                      &$code($c2, $d2));
-    }
-  }
-  else {
-    foreach (0..(@$states-1)) {
-      my $state = $states->[$_];
-      my $d2 = $d;
-      my $c2 = $state->[$os];
-      ($c2, $d2) = ($d2, $c2) if $reverse;
-      push @$state, ($state->[$os-1],&$code($c2, $d2) );
-    }
-  }
-
-  return $var;
-}
-
-##### builtins (operation, modifies states)
-
-sub bltin {
-  my($c,undef,undef,$code) = @_;
-  my $var = _new;
-  my $os = $c->[0];
-  push(@$_, ($_->[$os-1], &$code($_->[$os]))) foreach @$states;
-  return $var;
-}
-
 ##
 # performing a conditional in paralell on the states (ie. without looking)
 # returns a new variable
 
 sub p_op {
   my ($arg1, $op, $arg2, $true_cf, $false_cf) = @_;
-  my ($os1, $os2);
-  $os1 = (ref($arg1) && $arg1->isa('Quantum::Entanglement')) ? $arg1->[0] : 0;
-  $os2 = (ref($arg2) && $arg2->isa('Quantum::Entanglement')) ? $arg2->[0] : 0;
-  croak "Need at least one entangled variable to perform parallel ops"
-    unless ($os1 or $os2);
-  my $var = _new;
-  my ($foo, $if_code, $p_code);
-  # work out what the operation is and what on
-  if ($os1 && $os2) {
-    $foo = '$state->[$os1] ' . "$op" . ' $state->[$os2]';
-    $if_code = 'local *QE::arg1 = \\$state->[$os1];
-                local *QE::arg2 = \\$state->[$os2];';
-    $p_code = '$state->[$os1-1] * $state->[$os2-1]';
+  $true_cf  = ref($true_cf)  ? $true_cf  : sub {1};
+  $false_cf = ref($false_cf) ? $false_cf : sub {0};
+  my $r = 0;
+  unless (ref($arg1) && UNIVERSAL::isa($arg1, 'Quantum::Entanglement')) {
+    $r = 1;
+    ($arg1, $arg2) = ($arg2, $arg1);
   }
-  elsif ($os1) {
-    $foo = '$state->[$os1] ' . "$op" . ' $arg2';
-    $if_code = 'local *QE::arg1 = \\$state->[$os1];
-                local *QE::arg2 = \\$arg2;';
-    $p_code = '$state->[$os1-1]';
-  }
-  else {
-    $foo = '$arg1 ' . "$op" . '$state->[$os2]';
-    $if_code = 'local *QE::arg1 = \\$arg1;
-                local *QE::arg2 = \\$state->[$os2];';
-    $p_code = '$state->[$os2-1]';
-  }
+  my $tcref;
+  eval "
+     \$tcref = sub {
+       local \*QE::arg1 = \\\$_[0];
+       local \*QE::arg2 = \\\$_[1];
+       if (\$_[0] $op \$_[1]) {
+         return \&\$true_cf;
+       }
+       else {
+         return \&\$false_cf;
+       }
+     }
+  "; croak "$0: something wrong in p_op $@" if $@;
 
-  # if some coderefs were passed, also need to let them do their work
-  if ($true_cf && ref($true_cf) eq 'CODE') {
-    my $stuff = "my \$rt;{ $if_code; if ($foo) {\$rt = &\$true_cf}";
-    if ($false_cf && ref($false_cf) eq 'CODE') { # both portions
-      $stuff .= " else {\$rt = &\$false_cf} ";
-    }
-    $foo = $stuff . '};$rt';
-  }
-  else {
-    $foo = "my \$rt; if ($foo) {\$rt = 1} else {\$rt = 0}; \$rt";
-  }
-
-  foreach my $state (@$states) {
-    my $new_prob = eval "$p_code";
-    push(@$state, $new_prob, eval $foo);
-    croak "Internal error: $@" if $@;
-  }
-  return $var;
+  return binop($arg1, $arg2, $r, $tcref);
 }
 
 # allows for other functions to be performed accross states, can take
@@ -1047,7 +1001,7 @@ Of course, setting this variable somewhat defeats the point of
 the module, but it could lead to some interesting pre-calculating
 algorithms which are fed with entangled input, which is then
 later defined (by testing ==, say )with the answer of the calculation
-appearing as if by magic in some other variable.  See also the
+appearing, as if by magic, in some other variable.  See also the
 section L<save_state>.
 
 =head2 p_op
@@ -1235,9 +1189,37 @@ See C<~/demo/shor.pl> for an example of the use of this function.
 
 =head2 Quantum::Entanglement::show_states
 
-This can be called to give you a peak into the internal state space used
-by the module, there might be some old values sitting around doing nothing,
-so do not expect this to make any sense.
+This allows you to find out the states that your variables are in, it
+does not count as observation.
+
+If called without arguments, this shows all the possible arrangements
+of values which the system can exist in, for instance, if you had
+two entangled variables:
+
+ $foo = entangle(1,0,1,1);
+ $bar = entangle(1,0,1,1);
+
+ print Quantum::Entanglement::show_states;
+
+outputs:
+
+ 1|0>   1|0>
+ 1|1>   1|0>
+ 1|0>   1|1>
+ 1|1>   0|1>
+
+If called as a method (or with a list of entangled vars) it will
+only return the states available to that variable, thus:
+
+ $foo = entangle(1,0,1,1);
+ print $foo->show_states;
+
+outputs:
+
+ 1|0> + 1|1>
+
+The ordering of the output of this function may change in later versions
+of this module.
 
 =head1 EXPORT
 
