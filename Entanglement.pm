@@ -8,7 +8,7 @@ BEGIN {
   use Math::Complex;
   my @M_Complex = qw(i Re Im rho theta arg cplx cplxe);
   our ($VERSION, @ISA, @EXPORT, @EXPORT_OK, %EXPORT_TAGS);
-  $VERSION     = 0.30;
+  $VERSION     = 0.31;
   @ISA         = qw(Exporter);
   @EXPORT      = qw(&entangle &p_op &p_func &q_logic
 		    &save_state &restore_state);
@@ -72,24 +72,24 @@ sub _add {
 
 # joins together two previously unconnected universes
 # takes two variables as args, gets the universes from those.
+# should be used to modify objects in place.
 sub _join {
-  my ($one,$two) = @_;
-  my ($uni1,$uni2) = (${$one->[0]},${$two->[0]});
-  return ($one,$two) if $uni1 == $uni2;
+  my ($uni1,$uni2) = (${$_[0]->[0]},${$_[1]->[0]});
+  return () if $uni1 == $uni2;
   my $universe = [];
   foreach my $s2 (@$uni2) {
     foreach my $s1 (@$uni1) {
       push @$universe, [@$s1,@$s2];
     }
   }
-  my $offsets1 = ${$one->[2]};
-  my $offsets2 = ${$two->[2]};
+  my $offsets1 = ${$_[0]->[2]};
+  my $offsets2 = ${$_[1]->[2]};
   my $extra = scalar(@{$uni1->[0]});
   push @$offsets1, map {$$_+=$extra; $_} @$offsets2;
-  ${$two->[2]} = $offsets1;
-  ${$one->[0]} = $universe;
-  ${$two->[0]} = $universe;
-  return ($one,$two);
+  ${$_[1]->[2]} = $offsets1;
+  ${$_[0]->[0]} = $universe;
+  ${$_[1]->[0]} = $universe;
+  return (1);
 }
 
 # exported constructor
@@ -217,7 +217,7 @@ sub _unravel {
   while (@hrs) {
     my $val = shift @hrs;
     my $h = shift @hrs;
-    delete ${$h}{$val} if scalar(keys %{${$h}{$val}}) < 2;
+    delete ${$h}{$val} if scalar(keys %{${$h}{$val}}) < 1;
   }
   return $tref;
 }
@@ -246,7 +246,7 @@ use overload
   'neg'=> sub { unnop($_[0], sub { -$_[0]} ) },
   '!'  => sub { unnop($_[0], sub { !$_[0]} ) },
   '++' => sub { mutop($_[0], sub {++$_[0]} ) },
-  '--' => sub { mutop($_[0], sub {++$_[0]} ) },
+  '--' => sub { mutop($_[0], sub {--$_[0]} ) },
   '<'  => sub { bioop(@_, sub{$_[0] <  $_[1]} ) },
   '>'  => sub { bioop(@_, sub{$_[0] >  $_[1]} ) },
   '<=' => sub { bioop(@_, sub{$_[0] <= $_[1]} ) },
@@ -628,7 +628,7 @@ sub p_func {
     $foo .= '$state->[' . $c->[1] . '],';
     push @p_codes, $c->[1]-1;
   } while ( ref($_[0]) && UNIVERSAL::isa($_[0], 'Quantum::Entanglement'));
-  $foo .= '@args);';
+  $foo .= scalar(@_)? '@args);' : ');';
   my @args = @_;
   # loop over states, evaluating function in caller's package
   my $var = $first->_add;
@@ -666,7 +666,7 @@ sub q_logic {
 }
 
 # takes ft of amplitudes of a var, creates new state with the
-# transformed amplitues and the values from the first state.
+# transformed amplitudes and the values from the first state.
 sub QFT {
   my $c = $_[0];
   my $var = $c->_add;

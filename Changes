@@ -1,5 +1,10 @@
 Revision history for Perl extension Quantum::Entanglement.
 
+0.31 -
+BUGFIXES:  Warnings in some eval()s removed.
+           -- was doing ++
+           New version of DESTRUCT was being a little over-zealous
+
 0.30 - Sun Mar 11 2001 22:00:00
 Changes    ~ show_states output has changed
            ~ variables exist in independant universes until they interact
