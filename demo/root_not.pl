@@ -2,7 +2,7 @@
 use strict;
 use warnings;
 
-use Quantum::Entanglement qw(:complex);
+use Quantum::Entanglement qw(:DEFAULT :complex);
 
 my $foo = entangle(1, 0);           #     foo = |0>
 

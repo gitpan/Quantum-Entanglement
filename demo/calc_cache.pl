@@ -1,6 +1,6 @@
 #!/usr/bin/perl -w
 
-use Quantum::Entanglement qw(:complex);
+use Quantum::Entanglement qw(:DEFAULT);
 
 # list of possible input values for our computationally slow function:
 

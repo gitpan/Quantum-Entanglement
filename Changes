@@ -1,5 +1,14 @@
 Revision history for Perl extension Quantum::Entanglement.
 
+0.23 - Thu Jan 25 2001 00:00:00
+
+Changes    + Quantum Fourier Transform (QFT) function added
+           + export tags for same
+           + documentation for shor.pl, now uses QFT also
+
+BUGFIXES   stringyfying and the like could give "uninitialized value"
+             warnings when using complex amplitudes, this has now been sorted.
+
 0.23 - Wed Jan 24 2001 14:00:00
 
 Changes    ~ (int) search.CPAN podladtors ate my pod, fixed so things

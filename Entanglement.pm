@@ -8,12 +8,14 @@ BEGIN {
   use Math::Complex;
   my @M_Complex = qw(i Re Im rho theta arg cplx cplxe);
   our ($VERSION, @ISA, @EXPORT, @EXPORT_OK, %EXPORT_TAGS);
-  $VERSION     = 0.23;
+  $VERSION     = 0.24;
   @ISA         = qw(Exporter);
   @EXPORT      = qw(&entangle &p_op &p_func &q_logic
 		    &save_state &restore_state);
-  %EXPORT_TAGS = (complex => [@M_Complex, @EXPORT]);
-  @EXPORT_OK   = (@M_Complex);
+  %EXPORT_TAGS = (DEFAULT => [@EXPORT],
+		  complex => [@M_Complex],
+		  QFT => [qw(&QFT)],);
+  @EXPORT_OK   = (@M_Complex, '&QFT');
 }
 our (@EXPORT_OK, @EXPORT);
 
@@ -290,7 +292,7 @@ sub str_ent {
   my %str_vals;
   # work out which state we want to retain
   foreach my $state (@$states) {
-    $str_vals{$state->[$os]} += $state->[$os-1];
+    $str_vals{$state->[$os]} = $state->[$os-1] + ($str_vals{$state->[$os]}||0);
   }
 
   my ($hr, $ar) = _normalise(\%str_vals);
@@ -334,7 +336,8 @@ sub num_ent {
   my %str_vals;
   # work out which state we want to retain
   foreach my $state (@$states) {
-    $str_vals{+$state->[$os]} += $state->[$os-1];
+    $str_vals{+$state->[$os]} =
+               $state->[$os-1] + ($str_vals{+$state->[$os]}||0);
   }
   my ($hr, $ar) = _normalise(\%str_vals);
   my $rand = rand(1);
@@ -688,6 +691,23 @@ sub q_logic {
   return $var;
 }
 
+# takes ft of amplitudes of a var, creates new state with the
+# transformed amplitues and the values from the first state.
+sub QFT {
+  my $os = $_[0]->[0];
+  my $var = _new;
+  my @inputs = map {$_->[$os-1]} @$states; # get current probs
+  my $num = scalar @inputs;
+  foreach my $r (0..($num-1)) {
+    my $prob = 0;
+    foreach my $x (0..($num-1)) {
+      $prob += cplxe(1,(-2*pi*$r*$x / $num)) * $inputs[$x];
+    }
+    push @{$states->[$r]}, $prob, $states->[$r]->[$os];
+  }
+  return $var;
+}
+
 sub save_state{
   my @os;
   my $stash = [];
@@ -744,7 +764,7 @@ Quantum::Entanglement - QM entanglement of variables in perl
 
 =head1 SYNOPSIS
 
- use Quantum::Entanglement qw(:complex);
+ use Quantum::Entanglement qw(:DEFAULT :complex :QFT);
 
  my $c = entangle(1,0,i,1);    # $c = |0> + i|1>
  my $d = entangle(1,0,1,1);    # $d = |0> + |1>
@@ -894,10 +914,14 @@ To use this module in your programs, simply add a
 line to the top of your code,  if you want to use complex probability
 amplitudes, you should instead say:
 
- use Quantum::Entanglement qw(:complex);
+ use Quantum::Entanglement qw(:complex :DEFAULT);
 
 which will import the C<Math::Complex i Re Im rho theta arg cplx cplxe>
 functions / constants into your package.
+
+You can also import a Quantum Fourier transform, which acts on the
+probability amplitudes of a state (see below) by addind a C<:QFT>
+tag.
 
 This module adds an C<entangle> function to perl, this puts a
 variable into multiple states simultaneously.  You can then
@@ -1194,6 +1218,21 @@ caution is applied, this should not cause any problems.
 
 See the demo calc_cache for an example of use.
 
+=head2 QFT
+
+This provides a quantum fourier transform which acts on the probability
+amplitudes of a state, creating a new state with the same values as the
+initial state but with new probability amplitudes.  FTs like this are
+used in many quantum algorithms where it is important to find the
+periodicity of some function (for instance, Shor).
+
+This will only work if you have carefully populated your states, essentially
+if only one call has been made to the C<entangle> function (you can have
+many 'result' variables lying around, but only one 'seed' state).  This
+sort of breaks encapsulation, so this might change in the future!
+
+See C<~/demo/shor.pl> for an example of the use of this function.
+
 =head2 Quantum::Entanglement::show_states
 
 This can be called to give you a peak into the internal state space used
@@ -1221,16 +1260,12 @@ L<http://xxx.lanl.gov/abs/math.HO/9911150>
  - Machines, Logic and Quantum Physics,
       David Deutsch, Artur Ekert, Rossella Lupacchini.
 
-A slightly cheating version of Shor's algorithm for
-factoring numbers is provided as C<~/demo/shor.pl>.
+Various examples are provided in the C<~/demo/> directory of the
+distribution.
 
 =head1 BUGS
 
 This is slow(ish) but fun, so hey!
-
-I intend to provide a means of performing fourier transforms to
-superposed states, so that quantum algorithms can be run as intended, it
-is also likely that I'll implement matrix operations on state base vectors.
 
 =head2 Shortcomings
 
