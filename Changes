@@ -1,5 +1,21 @@
 Revision history for Perl extension Quantum::Entanglement.
 
+0.30 - Sun Mar 11 2001 22:00:00
+Changes    ~ show_states output has changed
+           ~ variables exist in independant universes until they interact
+           ~ (int) massive internal restructuring
+
+BUGFIXES:  nested entanglements no longer core dump during destruction
+
+0.26 - Sun Mar 03 2001 23:00:00
+(not released to CPAN)
+Changes    + atan2, ! and '&{}' also overloaded
+           ~ show_states doesn't stringify values
+           ~ (int) _rationalise_states no longer stringifies values
+
+BUGFIXES:  Some internal functions were stringifying things (by using them as
+           hash keys), this has been fixed.
+
 0.25 - Sat Feb 03 2001 23:00:00
 
 Changes    ~ Removed some duplicated internal code
@@ -88,7 +104,10 @@ Changes:   + Internal structure made better, probability now sticks to
 
 BUGFIXES:  probability now works
 
-
 0.01 - Fri Jan 12 2001 19:00:00
 
 Initial archived version pending major rewrite
+
+--
+This module is copyright (c) Alex Gough, 2001.  It is also free software and
+may be used or redistributed under the same terms as perl itself.

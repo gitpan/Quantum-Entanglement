@@ -8,7 +8,7 @@ BEGIN {
   use Math::Complex;
   my @M_Complex = qw(i Re Im rho theta arg cplx cplxe);
   our ($VERSION, @ISA, @EXPORT, @EXPORT_OK, %EXPORT_TAGS);
-  $VERSION     = 0.25;
+  $VERSION     = 0.30;
   @ISA         = qw(Exporter);
   @EXPORT      = qw(&entangle &p_op &p_func &q_logic
 		    &save_state &restore_state);
@@ -31,95 +31,70 @@ $Quantum::Entanglement::conform = 0; # true=> strives for truth when observing
 # methods for saving and restoring state
 # pod
 
-# =begin pretty_pictures
+# =begin pretty pictures
 #
-# Things look like this:
+# Things look a bit like this...
 #
-# $state_info   = [ \-1, ref1, ref2, ... ];
-#                        /
-#                      |/----<----\
-#                      /           \
-# entangled var1 = [offset, ref to offset ];
+# $variable = [ref to var which itself refs to an annon array (the universe),
+#	       offset of values of variable within universe,
+#	       ref to var which itself refs to an annon array (the offsets)];
 #
-# where ref1 and ref to offset are the SAME reference and
-# where offset is the element number of val1 in each state:
+# $offsets =  [refs to all the offsets in a given universe, ...]
+# $universe=  [ [prob1,val1,prob2,val2],
+#	        [prob1,val1,prob2,val2], etc. ]
 #
-# $states = [
-#	    [prob1, val1, prob2, val2],
-#	    [prob1, val1, prob2, val2],
-#	    ];
-#
-# =cut pretty_pictures
+# =cut
 
-my $state_info =[\-1]; # these contain the global state space
-my $states = [];
-
+# creates a new set of universes
 sub _new {
-  my $varnum = ${$state_info->[-1]} +2;
-  my $var = [$varnum];
-  $var->[1] = \ $var->[0];
+  my $universe = [];
+  my $offsets = [];
+  my $var = [\$universe,1,\$offsets];
+  $offsets->[0] = \ $var->[1];
+  while (@_) {
+    push @$universe, [shift,shift];
+  }
   bless $var, 'Quantum::Entanglement';
-  push @$state_info, $var->[1];
   return $var;
 }
 
-# this is convoluted, but trust me
-sub DESTROY {
-  my $os_ref = $_[0]->[1];
-  my $os = $_[0]->[0];
+# add a variable without adding values (ie. a derived value)
+# returns the new variable
+sub _add {
+  my $current = $_[0];
+  my $universe = ${ $current->[0]};
+  my $offset = scalar(@{$universe->[0]}) + 1;
+  my $var= [\$universe,$offset,\ ${$current->[2]}];
+  push @{${$current->[2]}} , \$var->[1];
+  bless $var, 'Quantum::Entanglement';
+  return $var;
+}
 
-  if ($os < 0) { # states already cleaned up by restore_state
-    undef $_[0]->[0]; undef $_[0]->[1];
-    return;
-  }
-
-  my $os_ref_str = "$os_ref";
-
-  my $si_os=0;
- LOOK: for (0..@$state_info) {
-    $si_os = $_;
-    last LOOK if "${$state_info}[$_]" eq $os_ref_str; # we've found the offset
-  }
-  carp "Trouble during object destruction" unless $si_os;
-
-  splice(@$_,$os-1,2) foreach @$states; # remove stuff from state space
-  splice(@$state_info, $si_os,1);
-  unless ($si_os-1 == scalar @$state_info) { # took away last element
-    foreach (@{$state_info}[$si_os..(@$state_info-1)]) {
-      ${$_}-=2;
+# joins together two previously unconnected universes
+# takes two variables as args, gets the universes from those.
+sub _join {
+  my ($one,$two) = @_;
+  my ($uni1,$uni2) = (${$one->[0]},${$two->[0]});
+  return ($one,$two) if $uni1 == $uni2;
+  my $universe = [];
+  foreach my $s2 (@$uni2) {
+    foreach my $s1 (@$uni1) {
+      push @$universe, [@$s1,@$s2];
     }
   }
-  undef $_[0]->[0]; undef $_[0]->[1];
-
-  # clean up alike states
-  _rationalise_states() if $Quantum::Entanglement::destroy;
-
+  my $offsets1 = ${$one->[2]};
+  my $offsets2 = ${$two->[2]};
+  my $extra = scalar(@{$uni1->[0]});
+  push @$offsets1, map {$$_+=$extra; $_} @$offsets2;
+  ${$two->[2]} = $offsets1;
+  ${$one->[0]} = $universe;
+  ${$two->[0]} = $universe;
+  return ($one,$two);
 }
 
 # exported constructor
 sub entangle {
-  if (scalar @{$state_info} == 1) { # first entangled variable
-    my $var = _new;
-    # fill up state space with initial states
-    do {
-      my ($prob, $val) = splice(@_,0,2);
-      push @$states, [$prob, $val];
-    } while (@_);
-    return $var;
-  }
-  else { # adding another variable to the state space
-    my $var = _new;
-    # copy the current state space
-    my @space_copy = @$states;
-    $states = [];
-    while (my $prob = shift) {
-      my $val = shift;
-      foreach my $os (@space_copy) {
-	push @$states, [@$os , $prob, $val];
-      }
-    }
-    return $var;
-  }
+  return _new(@_);
 }
 
 ## Utility routines
@@ -128,26 +103,32 @@ sub entangle {
 # are no longer accessable, does not count as observation
 sub show_states {
   my $rt;
-  if (ref($_[0]) && UNIVERSAL::isa($_[0], 'Quantum::Entanglement')) {
-    while (@_) { # we assume all args are Q::E vars if the first is...
-      my $os = $_[0]->[0];
-      foreach (@$states) {
-	my($prob, $val) = @{$_}[$os-1,$os];
-	$rt .= "$prob|$val> + ";
-      }
-      substr($rt,-3,3,"\n");
-      shift;
+  my $var = shift;
+  my $universe = ${$var->[0]};
+  if ($_[0]) {
+    foreach (@$universe) { my $t;
+      $rt .= (++$t % 2) ? "$_|" : overload::StrVal($_).">\t" foreach @$_;
+      $rt .= "\n";
     }
-    return $rt;
   }
   else {
-    foreach my $state (@$states) {
-      my $temp = 0;
-      $rt .= ($temp++ % 2) ? "$_>\t" : "$_|" foreach @$state;
-      substr($rt,-1,1,"\n");
-    }
-    return $rt;
+    my $os = $var->[1];
+    $rt .= $_->[$os-1]."|".overload::StrVal($_->[$os]).">\t"
+      foreach @$universe;
+    substr($rt,-1,1,"\n");
   }
+  return $rt;
+}
+
+# egads! (and don't tell anyone about the grep, it's a secret)
+sub DESTROY {
+  my ($universe, $offsets) = (${$_[0]->[0]}, ${$_[0]->[2]});
+  my $os = $_[0]->[1];
+  splice(@$_,$os-1,2) foreach @$universe;
+  @$offsets = grep {if ($$_ != $os) {$$_ -= 2 if $$_ > $os;1;} else {0;}}
+               @$offsets;
+  _rationalise_states([\$universe])
+          if $Quantum::Entanglement::destroy;
 }
 
 # takes two non normalised probabilities and returns true with prob(1/1+2)
@@ -182,22 +163,23 @@ sub _normalise {
 # this builds up a multi-layered hash so as to find the unique sets of
 # states, it then uses _unravel to get them back out of the hash
 sub _rationalise_states {
-  my %foo;
-  my $len = scalar(@{$states->[0]})/2;
+  my $universe = ${$_[0]->[0]};
+  my $len = scalar(@{$universe->[0]})/2;
   my @p_os = map {$_*2  } (0..$len-1);
   my @v_os = map {$_*2+1} (0..$len-1);
   my $foo = {};
-  foreach my $state (@$states) { # build an icky data structure
+  foreach my $state (@$universe) { # build an icky data structure
     my $tref = $foo;
     foreach (@v_os) {
-      my $val = $state->[$_];
+      my $val = ref($state->[$_]) ? overload::StrVal($state->[$_])
+	                          : $state->[$_];
       if ($_==2*$len-1) { # last level of the structure
 	if (exists $tref->{$val}) {
 	  my @temp = @{$state}[@p_os];
-	  $_+=shift @temp foreach @{$tref->{$val}};
+	  $_+=shift @temp foreach @{$tref->{$val}}[@p_os];
 	}
 	else {
-	  $tref->{$val} = [@{$state}[@p_os]];
+	  $tref->{$val} = [@{$state}];
 	}
       }
       else { # an intermediate level
@@ -211,25 +193,24 @@ sub _rationalise_states {
     }
   }
   # do something with it...
-  $states =[];
+  @$universe =();
   while (1) {
     my $aref = _unravel($foo);
     last unless $aref;
-    push @$states, $aref;
+    push @$universe, $aref;
   }
-  return 1;
+  return $universe;
 }
+
 sub _unravel {
   my $tref = $_[0];
   return undef unless (scalar keys %$tref);
-  my @values;
   my @hrs;
   my($last_ref, $val);
   do {
     $last_ref = $tref;
     ($val,$tref) = %$tref;
     unshift @hrs, $val, $last_ref;
-    push @values, $val;
   } until (ref($tref) eq 'ARRAY');
   delete ${$last_ref}{$val};
   splice @hrs, 0,2;
@@ -238,12 +219,7 @@ sub _unravel {
     my $h = shift @hrs;
     delete ${$h}{$val} if scalar(keys %{${$h}{$val}}) < 2;
   }
-
-  my $aref =[];
-  for (0..$#values) {
-    push @$aref, ${$tref}[$_],$values[$_];
-  }
-  return $aref;
+  return $tref;
 }
 
 
@@ -268,6 +244,7 @@ use overload
   '^'  => sub { binop(@_, sub{$_[0] ^ $_[1]} ) },
   '~'  => sub { unnop($_[0], sub { ~$_[0]} ) },
   'neg'=> sub { unnop($_[0], sub { -$_[0]} ) },
+  '!'  => sub { unnop($_[0], sub { !$_[0]} ) },
   '++' => sub { mutop($_[0], sub {++$_[0]} ) },
   '--' => sub { mutop($_[0], sub {++$_[0]} ) },
   '<'  => sub { bioop(@_, sub{$_[0] <  $_[1]} ) },
@@ -290,25 +267,44 @@ use overload
   'abs'=> sub { unnop($_[0], sub{ abs $_[0]} ) },
   'log'=> sub { unnop($_[0], sub{ log $_[0]} ) },
   'sqrt'=>sub { unnop($_[0], sub{ sqrt $_[0]}) },
-
+  'atan2'=>sub{ binop(@_, sub{atan2($_[0], $_[1])} ) },
+  '&{}'=> \&sub_ent,
   'bool'=> \&bool_ent, q{""}  => \&str_ent,  '0+' => \&num_ent,
   '='   => \&copy_ent,
   'fallback' => 1;
 
 # copying (not observation, clones states, does not increase state space)
 sub copy_ent {
-  my $os = $_[0]->[0];
-  my $val = _new;
-  push(@$_, $_->[$os-1], $_->[$os]) foreach @$states;
+  my $os = $_[0]->[1];
+  my $val = $_[0]->_add;
+  my $universe = ${$_[0]->[0]};
+  push(@$_, $_->[$os-1], $_->[$os]) foreach @$universe;
   return $val;
+}
+
+# running entangled subroutines
+sub sub_ent {
+  my $obj = $_[0];
+  my $os = $obj->[1];
+  my $universe = ${$obj->[0]};
+  return sub {
+    my $var = $obj->_add;
+    foreach my $state (@$universe) {
+      push(@$state, $state->[$os-1],
+	   scalar( $state->[$os]->(@_) ));
+    }
+    return $var;
+  }
 }
 
 # stringification (observation)
 sub str_ent {
-  my $os = $_[0]->[0];
+  my $c = $_[0];
+  my $os = $c->[1];
+  my $universe = ${$c->[0]};
   my %str_vals;
   # work out which state we want to retain
-  foreach my $state (@$states) {
+  foreach my $state (@$universe) {
     $str_vals{$state->[$os]} = $state->[$os-1] + ($str_vals{$state->[$os]}||0);
   }
 
@@ -323,24 +319,24 @@ sub str_ent {
   }
   # retain only that state
   my @retains;
-  for (0..(@$states-1)) {
-    my $state = $states->[$_];
+  for (0..(@$universe-1)) {
+    my $state = $universe->[$_];
     my $foo = $state->[$os];
     push(@retains, $_) if ("$foo" eq $rt);
   }
   if ($Quantum::Entanglement::destroy) {
-    @$states = @$states[@retains];
+    @$universe = @$universe[@retains];
     return $rt;
   }
 
   # set all non retained states to zero probability, leave others alone
   my $next_retain = shift @retains;
- PURGE: foreach my $snum ( 0..(@$states-1) ) {
+ PURGE: foreach my $snum ( 0..(@$universe-1) ) {
     if ($snum == $next_retain) {
       $next_retain = shift(@retains) || -1;
       next PURGE;
     }
-    my $state = ${$states}[$snum];
+    my $state = ${$universe}[$snum];
     $$state[$_] = 0 foreach grep {!($_ % 2)} (0..(@$state-1))
   }
   return $rt;
@@ -349,10 +345,12 @@ sub str_ent {
 # numification (have to coerce things into numbers then strings for
 # probability hash purposes, ick) (observation)
 sub num_ent {
-  my $os = $_[0]->[0];
+  my $c = $_[0];
+  my $os = $c->[1];
+  my $universe = ${$c->[0]};
   my %str_vals;
   # work out which state we want to retain
-  foreach my $state (@$states) {
+  foreach my $state (@$universe) {
     $str_vals{+$state->[$os]} =
                $state->[$os-1] + ($str_vals{+$state->[$os]}||0);
   }
@@ -367,25 +365,25 @@ sub num_ent {
   }
   # retain only that state
   my @retains;
-  for (0..(@$states-1)) {
-    my $state = $states->[$_];
+  for (0..(@$universe-1)) {
+    my $state = $universe->[$_];
     my $foo = +$state->[$os];
     push(@retains, $_) if ($foo == $rt);
   }
 
   if ($Quantum::Entanglement::destroy) {
-    @$states = @$states[@retains];
+    @$universe = @$universe[@retains];
     return $rt;
   }
 
   # set probabilty to zero for each state we know can't be so
   my $next_retain = shift @retains;
- PURGE: foreach my $snum ( 0..(@$states-1) ) {
+ PURGE: foreach my $snum ( 0..(@$universe-1) ) {
     if ($snum == $next_retain) {
       $next_retain = shift(@retains) || -1;
       next PURGE;
     }
-    my $state = ${$states}[$snum];
+    my $state = ${$universe}[$snum];
     $$state[$_] = 0 foreach grep {!($_ % 2)} ( 0..(@$state-1) )
   }
   return $rt;
@@ -393,12 +391,14 @@ sub num_ent {
 
 # boolean context (observation)
 sub bool_ent {
-  my $os = $_[0]->[0];
+  my $c = $_[0];
+  my $os = $c->[1];
+  my $universe = ${$c->[0]};
   my ($rt,$ft,$p_true, $p_false) = (0,0,0,0);
   my (@true, @false);
 
-  foreach (0..(@$states-1)) {
-    my $state = $states->[$_];
+  foreach (0..(@$universe-1)) {
+    my $state = $universe->[$_];
     my $c2 = $state->[$os];
     if ($c2) {
       $rt++;
@@ -427,17 +427,17 @@ sub bool_ent {
   }
 
   if ($Quantum::Entanglement::destroy) {
-    @$states = @$states[@retains];
+    @$universe = @$universe[@retains];
     return $rt;
   }
 
   my $next_retain = shift @retains;
- PURGE: foreach my $snum ( 0..(@$states-1) ) {
+ PURGE: foreach my $snum ( 0..(@$universe-1) ) {
     if ($snum == $next_retain) {
       $next_retain = shift(@retains) || -1;
       next PURGE;
     }
-    my $state = ${$states}[$snum];
+    my $state = ${$universe}[$snum];
     $$state[$_] = 0 foreach grep {!($_ % 2)} (0..(@$state-1))
   }
   return $rt;
@@ -446,22 +446,28 @@ sub bool_ent {
 ### any BInary, Non-observational OPeration
 sub binop {
   my ($c,$d,$r,$code) = @_;
-  my $var = _new; # for return value
+  my $var;
+  my $universe;
   if ( ref($d)
        && UNIVERSAL::isa($d, 'Quantum::Entanglement')) {
-    my $od = $d->[0]; my $oc = $c->[0];
-    foreach my $state (@$states) {
+    _join($c,$d);
+    my $od = $d->[1]; my $oc = $c->[1];
+    $var = _add($c);
+    $universe = ${$c->[0]};
+    foreach my $state (@$universe) {
       push @$state, ($state->[$oc-1] * $state->[$od-1],
                      &$code($state->[$oc],$state->[$od]) );
     }
   }
   else {        # adding something to one state
-    my $oc = $c->[0];
+    my $oc = $c->[1];
+    $var = _add($c);
+    $universe = ${$c->[0]};
     if ($r) {
-      push(@$_, ($_->[$oc-1], &$code($d,$_->[$oc]))) foreach @$states;
+      push(@$_, ($_->[$oc-1], &$code($d,$_->[$oc]))) foreach @$universe;
     }
     else {
-      push(@$_, ($_->[$oc-1], &$code($_->[$oc],$d))) foreach @$states;
+      push(@$_, ($_->[$oc-1], &$code($_->[$oc],$d))) foreach @$universe;
     }
   }
   return $var;
@@ -474,11 +480,13 @@ sub bioop {
   my $ft = 0;
   my (@true, @false);
   my ($p_true, $p_false) = (0,0);
-
+  my $universe;
   if (ref($d) && UNIVERSAL::isa($d, 'Quantum::Entanglement')) {
-    foreach (0..(@$states-1)) {
-      my $state = $states->[$_];
-      my $oc = $c->[0]; my $od = $d->[0];
+    $c->_join($d);
+    $universe = ${$c->[0]};
+    foreach (0..(@$universe-1)) {
+      my $state = $universe->[$_];
+      my $oc = $c->[1]; my $od = $d->[1];
       my $d2 = $state->[$od];
       my $c2 = $state->[$oc];
       if (&$code($c2, $d2)) {
@@ -494,10 +502,11 @@ sub bioop {
     }
   }
   else {
-    foreach (0..(@$states-1)) {
-      my $state = $states->[$_];
+    $universe = ${$c->[0]};
+    foreach (0..(@$universe-1)) {
+      my $state = $universe->[$_];
       my $d2 = $d;
-      my $os = $c->[0];
+      my $os = $c->[1];
       my $c2 = $state->[$os];
       ($c2, $d2) = ($d2, $c2) if $reverse;
       if (&$code($c2,$d2)) {
@@ -517,7 +526,7 @@ sub bioop {
   return $rt unless $ft; # no states are false, so must be true
   my @retains;
   # if it can be true, decide if it will end up being true or not
-  if ( _sel_output( $p_true,$p_false) 
+  if ( _sel_output( $p_true,$p_false)
        or $Quantum::Entanglement::conform) {
     @retains = @true;
     $rt = $rt;
@@ -528,17 +537,17 @@ sub bioop {
   }
 
   if ($Quantum::Entanglement::destroy) {
-    @$states = @$states[@retains];
+    @$universe = @$universe[@retains];
     return $rt;
   }
 
   my $next_retain = shift @retains;
- PURGE: foreach my $snum ( 0..(@$states-1) ) {
+ PURGE: foreach my $snum ( 0..(@$universe-1) ) {
     if ($snum == $next_retain) {
       $next_retain = shift(@retains) || -1;
       next PURGE;
     }
-    my $state = ${$states}[$snum];
+    my $state = ${$universe}[$snum];
     $$state[$_] = 0 foreach grep {!($_ % 2)} (0..(@$state-1))
   }
   return $rt;
@@ -549,8 +558,9 @@ sub bioop {
 sub mutop {
   my $c = $_[0];
   my $code = $_[1];
-  my $os = $c->[0];
-  foreach my $state (@$states) {
+  my $os = $c->[1];
+  my $universe = ${$c->[0]};
+  foreach my $state (@$universe) {
     $state->[$os] = &$code($state->[$os]);
   }
   return $c;
@@ -559,9 +569,9 @@ sub mutop {
 sub unnop {
   my $c = $_[0];
   my $code = $_[1];
-  my $os = $c->[0];
-  my $val = _new;
-  foreach my $state (@$states) {
+  my $os = $c->[1];
+  my $val = $c->_add; my $universe = ${$c->[0]};
+  foreach my $state (@$universe) {
     push(@$state, $state->[$os-1], &$code($state->[$os]) );
   }
   return $val;
@@ -606,18 +616,25 @@ sub p_func {
   # build up the function call by shifting off
   # entangled variables until something isn't entangled
   my $foo = ref($func) ? "&\$func(" : "$func(";
+  my @temp = @_;
+  my $first = $temp[0];
+  do {
+    my $c = shift @temp;
+    _join($first,$c);
+  } while (ref($temp[0]) && UNIVERSAL::isa($temp[0],'Quantum::Entanglement'));
   my @p_codes = ();
   do {
     my $c = shift;
-    $foo .= '$state->[' . $c->[0] . '],';
-    push @p_codes, $c->[0]-1;
+    $foo .= '$state->[' . $c->[1] . '],';
+    push @p_codes, $c->[1]-1;
   } while ( ref($_[0]) && UNIVERSAL::isa($_[0], 'Quantum::Entanglement'));
   $foo .= '@args);';
   my @args = @_;
   # loop over states, evaluating function in caller's package
-  my $var = _new;
+  my $var = $first->_add;
   my $p_code = join('*', map {"\$state->[$_]"} @p_codes);
-  foreach my $state (@$states) {
+  my $universe = ${$first->[0]};
+  foreach my $state (@$universe) {
     my $new_prob = eval $p_code;
     push(@$state, $new_prob, eval "package $package; $foo");
     croak "Internal error: $@" if $@;
@@ -632,32 +649,37 @@ sub p_func {
 sub q_logic {
   my $func = shift;
   my (@offsets);
-  @offsets = map {$_->[0]-1, $_->[0]} @_;
-  my $var = _new;
+  my $first = $_[0];
+  _join($first,$_) foreach @_;
+  @offsets = map {$_->[1]-1, $_->[1]} @_;
+  my $var = $first->_add;
+  my $universe = ${$first->[0]};
   my @resultant_space;
-  foreach my $state (@$states) {
+  foreach my $state (@$universe) {
     my @new_states = &$func(@{$state}[@offsets]);
     do {
       push @resultant_space, [@$state, splice(@new_states,0,2)];
     } while (@new_states);
   }
-  @{$states} = @resultant_space;
+  @{$universe} = @resultant_space;
   return $var;
 }
 
 # takes ft of amplitudes of a var, creates new state with the
 # transformed amplitues and the values from the first state.
 sub QFT {
-  my $os = $_[0]->[0];
-  my $var = _new;
-  my @inputs = map {$_->[$os-1]} @$states; # get current probs
+  my $c = $_[0];
+  my $var = $c->_add;
+  my $os = $c->[1];
+  my $universe = ${$c->[0]};
+  my @inputs = map {$_->[$os-1]} @$universe; # get current probs
   my $num = scalar @inputs;
   foreach my $r (0..($num-1)) {
     my $prob = 0;
     foreach my $x (0..($num-1)) {
       $prob += cplxe(1,(-2*pi*$r*$x / $num)) * $inputs[$x];
     }
-    push @{$states->[$r]}, $prob, $states->[$r]->[$os];
+    push @{$universe->[$r]}, $prob, $universe->[$r]->[$os];
   }
   return $var;
 }
@@ -665,18 +687,19 @@ sub QFT {
 sub save_state{
   my @os;
   my $stash = [];
-  my $foo = 0;
 
   foreach (@_) {
-    carp "Can only save state of Quantum::Entangle variables"
+    carp "Can only save state of Quantum::Entanglement variables"
       unless (ref($_) && UNIVERSAL::isa($_, 'Quantum::Entanglement'));
-    push @os, $_->[0];
   }
 
-  foreach my $state (@$states) {
+  my $first = $_[0];
+  _join($first, $_) foreach @_;
+  push(@os, $_->[1]) foreach @_;
+  my $universe = ${$_[0]->[0]};
+  foreach my $state (@$universe) {
     push @$stash, [ @{$state}[map {$_-1,$_} @os] ];
   }
-
   return bless $stash, 'Quantum::Entanglement::State';
 }
 
@@ -684,23 +707,23 @@ sub save_state{
 sub restore_state {
   my $stash = shift;
 
-  # mark all currently stored states as dead
-  foreach (@$state_info) {
-    $$_ = -2 unless $$_ <0;
-  }
-
-  $state_info =[\-1];
-  $states =[];
   my $num_saved = scalar(@{$stash->[0]}) /2;
   carp "You don't have any states saved!" unless $num_saved;
-
-  foreach (@$stash) {
-    push @$states, [@$_];
-  }
-
   my @newvars;
-  push(@newvars, _new) for 1..$num_saved;
-  return @newvars;
+  $newvars[0] = _new();
+  ${$newvars[0]->[0]}->[0] = ['fake','fake']; # no hackery here, no.
+  if ($num_saved > 1) {
+    for (2..$num_saved) {
+      push(@newvars, $newvars[0]->_add());
+      push @{${$newvars[0]->[0]}->[0]}, qw(fake fake); # or here, never
+    }
+  }
+  my $universe = ${$newvars[0]->[0]};
+  shift @$universe;
+  foreach (@$stash) {
+    push @$universe, [@$_];
+  }
+  return wantarray ? @newvars : $newvars[0];
 }
 
 # this is needed for simplicity of exporting save_states
@@ -850,7 +873,7 @@ Lets say we do this, and $c turns out to be equal to zero this time, what
 does that leave $foo and $bar as?  Clearly we cannot have both $foo and
 $bar both equal to one, as then $c would have been equal to one, but all
 the other possible values of $foo and $bar can still occur.  We say
-that the state of $foo is now entangled to the state of $bar so that
+that the state of $foo is now entangled with the state of $bar so that
 
  ($foo, $bar ) = |0,0> + |0,1> + |1,0>.
 
@@ -874,7 +897,7 @@ which will import the C<Math::Complex i Re Im rho theta arg cplx cplxe>
 functions / constants into your package.
 
 You can also import a Quantum Fourier transform, which acts on the
-probability amplitudes of a state (see below) by addind a C<:QFT>
+probability amplitudes of a state (see below) by adding a C<:QFT>
 tag.
 
 This module adds an C<entangle> function to perl, this puts a
@@ -900,7 +923,7 @@ number.
 
 Thus
 
- $foo = entangle(1, 0, 1+4*i, 1);
+ $foo = entangle(1,  0, 1+4*i, 1);
 
 corresponds to:
 
@@ -971,7 +994,7 @@ The default is for collapsed states to be destroyed, to alter this
 behaviour, set the C<$Quantum::Entanglement::destroy> variable to
 a false value.  In general though, you can leave this alone.
 
-=head2 Breaking this behaviour
+=head2 Dammit Jim, I can't change the laws of physics
 
 Although not the default, it is possible to cause observation (for
 boolean context or with comparison operators only) to act in a more
@@ -1075,7 +1098,7 @@ This lets you perform core functions and subs through the states
 of a superposition without observing and produce a new variable
 corresponding to a superposition of the results of the function.
 
- <p_func("func" ,entangled var,[more vars,] [optional args])
+ p_func("func" ,entangled var,[more vars,] [optional args])
 
 Any number of entangled variables can be passed to the function,
 optional args begin with the first non-entangled var.
@@ -1162,13 +1185,9 @@ the C<restore_state> method on the C<$state>:
 
   ($foo, $bar) = $state->restore_state;
 
-Once a state is restored, all other entangled variables will loose
-their values, so make sure that your save_state with everything you
-might want to use later.
-
-Multiple different states can be saved and restored independently,
-but only one set of global states can be active at once, if a little
-caution is applied, this should not cause any problems.
+The variables return by C<restore_state> will no longer be entangled to
+anything they were previously connected to.  If multiple variables have
+their state saved at once, then any connections between them will remain.
 
 See the demo calc_cache for an example of use.
 
@@ -1181,9 +1200,8 @@ used in many quantum algorithms where it is important to find the
 periodicity of some function (for instance, Shor).
 
 This will only work if you have carefully populated your states, essentially
-if only one call has been made to the C<entangle> function (you can have
-many 'result' variables lying around, but only one 'seed' state).  This
-sort of breaks encapsulation, so this might change in the future!
+if all seperately C<entangle>d variables do not interact.  This
+sort of breaks encapsulation, so might change in the future!
 
 See C<~/demo/shor.pl> for an example of the use of this function.
 
@@ -1192,23 +1210,7 @@ See C<~/demo/shor.pl> for an example of the use of this function.
 This allows you to find out the states that your variables are in, it
 does not count as observation.
 
-If called without arguments, this shows all the possible arrangements
-of values which the system can exist in, for instance, if you had
-two entangled variables:
-
- $foo = entangle(1,0,1,1);
- $bar = entangle(1,0,1,1);
-
- print Quantum::Entanglement::show_states;
-
-outputs:
-
- 1|0>   1|0>
- 1|1>   1|0>
- 1|0>   1|1>
- 1|1>   0|1>
-
-If called as a method (or with a list of entangled vars) it will
+If called as a method it will
 only return the states available to that variable, thus:
 
  $foo = entangle(1,0,1,1);
@@ -1216,10 +1218,32 @@ only return the states available to that variable, thus:
 
 outputs:
 
- 1|0> + 1|1>
+ 1|0>   1|1>
+
+If a variable is entangled with other superposed values, then calling
+C<save_state> with an additional true argument will display the states
+of all the variables which have interacted together.
+
+ print $foo->show_states(1);
+
+If two variables have not yet interacted, then they will not appear in
+the state space of the other.
 
 The ordering of the output of this function may change in later versions
 of this module.
+
+=head2 Entangling subroutines
+
+It is possible to entangle a set of subroutine references and later
+call them in parallel with the same set of arguments.  The subroutines
+will always be called in scalar context.  The return values of the
+subroutines will be present in the entangled variable returned.
+
+eg.
+
+ $subs = entangle(1 => sub {return $_[0}, 1=>sub {return $_[1]});
+ $return = $subs->(qw(chalk cheese));
+  # $return now |chalk> + |cheese>
 
 =head1 EXPORT
 
@@ -1302,4 +1326,3 @@ This module is free software.  It may be used, redistributed
 and/or modified under the same terms as perl itself.
 
 =cut
-
