@@ -1,5 +1,10 @@
 Revision history for Perl extension Quantum::Entanglement.
 
+0.23 - Wed Jan 24 2001 14:00:00
+
+Changes    ~ (int) search.CPAN podladtors ate my pod, fixed so things
+             look nice.  Nothing *actually* changed.  Bite me.
+
 0.22 - Tue Jan 23 2001 14:00:00
 
 Changes    + (int) under normal conditions, states will occasionally be
