@@ -8,17 +8,17 @@ BEGIN {
   use Math::Complex;
   my @M_Complex = qw(i Re Im rho theta arg cplx cplxe);
   our ($VERSION, @ISA, @EXPORT, @EXPORT_OK, %EXPORT_TAGS);
-  $VERSION     = 0.20;
+  $VERSION     = 0.22;
   @ISA         = qw(Exporter);
-  @EXPORT      = qw(&entangle &p_op &p_func &q_logic);
+  @EXPORT      = qw(&entangle &p_op &p_func &q_logic
+		    &save_state &restore_state);
   %EXPORT_TAGS = (complex => [@M_Complex, @EXPORT]);
   @EXPORT_OK   = (@M_Complex);
 }
 our (@EXPORT_OK, @EXPORT);
 
-my $state_info =[0]; # these contain the global state space
-my $states = [];
 $Quantum::Entanglement::destroy = 1; # true=> states that are no longer valid
+$Quantum::Entanglement::conform = 0; # true=> strives for truth when observing
 
 ## Contents:
 # Constructors
@@ -26,27 +26,73 @@ $Quantum::Entanglement::destroy = 1; # true=> states that are no longer valid
 # Overload table
 # Overload routines
 # parallel operators and functions
+# methods for saving and restoring state
 # pod, but maybe not up to the minute pod
 #             this module is under construction, as it were
 
-# a view of global state space, might still show historical states which
-# are no longer accessable, does not count as observation
-sub show_states {
-  foreach my $state (@$states) {
-    print((map {ref($_) && UNIVERSAL::isa($_, 'Math::Complex') ?
-	      $_ : "|$_>\t"} @$state), "\n");
-  }
+=begin pretty_pictures
+
+Things look like this:
+
+$state_info   = [ \-1, ref1, ref2, ... ];
+                        /
+                      |/----<----\
+                      /           \
+entangled var1 = [offset, ref to offset ];
+
+where ref1 and ref to offset are the SAME reference and
+where offset is the element number of val1 in each state:
+
+$states = [
+	   [prob1, val1, prob2, val2],
+	   [prob1, val1, prob2, val2],
+	  ];
+
+=cut pretty_pictures
+
+my $state_info =[\-1]; # these contain the global state space
+my $states = [];
+
+sub _new {
+  my $varnum = ${$state_info->[-1]} +2;
+  my $var = [$varnum];
+  $var->[1] = \ $var->[0];
+  bless $var, 'Quantum::Entanglement';
+  push @$state_info, $var->[1];
+  return $var;
 }
 
-# adds another variable to the state space without increasing the number
-# of states available to the system (best not to call from afar)
-# this squirrels away a copy of the var, this might be useful later.
-sub _new {
-  my $varnum = scalar @{$state_info};
-  my $var = [2 * $varnum -1];
-  bless $var, 'Quantum::Entanglement';
-  $state_info->[$varnum] = $var;
-  return $var;
+# this is convoluted, but trust me
+sub DESTROY {
+  my $os_ref = $_[0]->[1];
+  my $os = $_[0]->[0];
+
+  if ($os < 0) { # states already cleaned up by restore_state
+    undef $_[0]->[0]; undef $_[0]->[1];
+    return;
+  }
+
+  my $os_ref_str = "$os_ref";
+
+  my $si_os=0;
+ LOOK: for (0..@$state_info) {
+    $si_os = $_;
+    last LOOK if "${$state_info}[$_]" eq $os_ref_str; # we've found the offset
+  }
+  carp "Trouble during object destruction" unless $si_os;
+
+  splice(@$_,$os-1,2) foreach @$states; # remove stuff from state space
+  splice(@$state_info, $si_os,1);
+  unless ($si_os-1 == scalar @$state_info) { # took away last element
+    foreach (@{$state_info}[$si_os..(@$state_info-1)]) {
+      ${$_}-=2;
+    }
+  }
+  undef $_[0]->[0]; undef $_[0]->[1];
+
+  # clean up alike states
+  _rationalise_states() if $Quantum::Entanglement::destroy;
+
 }
 
 # exported constructor
@@ -77,6 +123,15 @@ sub entangle {
 
 ## Utility routines
 
+# a view of global state space, might still show historical states which
+# are no longer accessable, does not count as observation
+sub show_states {
+  foreach my $state (@$states) {
+    print((map {ref($_) && UNIVERSAL::isa($_, 'Math::Complex') ?
+	      $_ : "|$_>\t"} @$state), "\n");
+  }
+}
+
 # takes two non normalised probabilities and returns true with prob(1/1+2)
 sub _sel_output {
   my ($c, $d) = @_;
@@ -105,6 +160,74 @@ sub _normalise {
     return ($h2, $muts);
   }
 }
+
+# this builds up a multi-layered hash so as to find the unique sets of
+# states, it then uses _unravel to get them back out of the hash
+sub _rationalise_states {
+  my %foo;
+  my $len = scalar(@{$states->[0]})/2;
+  my @p_os = map {$_*2  } (0..$len-1);
+  my @v_os = map {$_*2+1} (0..$len-1);
+  my $foo = {};
+  foreach my $state (@$states) { # build an icky data structure
+    my $tref = $foo;
+    foreach (@v_os) {
+      my $val = $state->[$_];
+      if ($_==2*$len-1) { # last level of the structure
+	if (exists $tref->{$val}) {
+	  my @temp = @{$state}[@p_os];
+	  $_+=shift @temp foreach @{$tref->{$val}};
+	}
+	else {
+	  $tref->{$val} = [@{$state}[@p_os]];
+	}
+      }
+      else {
+	if (exists $tref->{$val}) {
+	  $tref = $tref->{$val};
+	}
+	else {
+	  $tref = $tref->{$val} = {};
+	}
+      }
+    }
+  }
+  # do something with it...
+  $states =[];
+  while (1) {
+    my $aref = _unravel($foo);
+    last unless $aref;
+    push @$states, $aref;
+  }
+  return 1;
+}
+sub _unravel {
+  my $tref = $_[0];
+  return undef unless (scalar keys %$tref);
+  my @values;
+  my @hrs;
+  my($last_ref, $val);
+  do {
+    $last_ref = $tref;
+    ($val,$tref) = %$tref;
+    unshift @hrs, $val, $last_ref;
+    push @values, $val;
+  } until (ref($tref) eq 'ARRAY');
+  delete ${$last_ref}{$val};
+  splice @hrs, 0,2;
+  while (@hrs) {
+    my $val = shift @hrs;
+    my $h = shift @hrs;
+    delete ${$h}{$val} if scalar(keys %{${$h}{$val}}) < 2;
+  }
+
+  my $aref =[];
+  for (0..$#values) {
+    push @$aref, ${$tref}[$_],$values[$_];
+  }
+  return $aref;
+}
+
 
 ##
 # Overloading.  Everything except for assignment operators
@@ -274,7 +397,8 @@ sub bool_ent {
   return $rt unless $ft; # no states are false, so must be true
   # if it can be true, decide if it will end up being true or not
   my @retains;
-  if ( _sel_output( $p_true,$p_false) ) {
+  if ( _sel_output( $p_true,$p_false)
+       or $Quantum::Entanglement::conform) {
     @retains = @true;
     $rt = $rt;
   }
@@ -357,7 +481,7 @@ sub bioop {
       my $os = $c->[0];
       my $c2 = $state->[$os];
       ($c2, $d2) = ($d2, $c2) if $reverse;
-      if (&$code($c,$d)) {
+      if (&$code($c2,$d2)) {
         $rt++;
         push @true, $_;
         $p_true += $state->[$os-1];
@@ -374,7 +498,8 @@ sub bioop {
   return $rt unless $ft; # no states are false, so must be true
   my @retains;
   # if it can be true, decide if it will end up being true or not
-  if ( _sel_output( $p_true,$p_false) ) {
+  if ( _sel_output( $p_true,$p_false) 
+       or $Quantum::Entanglement::conform) {
     @retains = @true;
     $rt = $rt;
   }
@@ -564,6 +689,52 @@ sub q_logic {
   return $var;
 }
 
+sub save_state{
+  my @os;
+  my $stash = [];
+  my $foo = 0;
+
+  foreach (@_) {
+    carp "Can only save state of Quantum::Entangle variables"
+      unless (ref($_) && UNIVERSAL::isa($_, 'Quantum::Entanglement'));
+    push @os, $_->[0];
+  }
+
+  foreach my $state (@$states) {
+    push @$stash, [ @{$state}[map {$_-1,$_} @os] ];
+  }
+
+  return bless $stash, 'Quantum::Entanglement::State';
+}
+
+# completely clobbers current state with whatever was saved previously
+sub restore_state {
+  my $stash = shift;
+
+  # mark all currently stored states as dead
+  foreach (@$state_info) {
+    $$_ = -2 unless $$_ <0;
+  }
+
+  $state_info =[\-1];
+  $states =[];
+  my $num_saved = scalar(@{$stash->[0]}) /2;
+  carp "You don't have any states saved!" unless $num_saved;
+
+  foreach (@$stash) {
+    push @$states, [@$_];
+  }
+
+  my @newvars;
+  push(@newvars, _new) for 1..$num_saved;
+  return @newvars;
+}
+
+# this is needed for simplicity of exporting save_states
+package Quantum::Entanglement::State;
+@Quantum::Entanglement::State::ISA = qw(Quantum::Entanglement);
+sub DESTROY {}
+
 1;
 
 __END__;
@@ -724,7 +895,7 @@ To use this module in your programs, simply add a
 line to the top of your code,  if you want to use complex probability
 amplitudes, you should instead say:
 
-use Quantum::Entanglement qw(:complex);
+ use Quantum::Entanglement qw(:complex);
 
 which will import the C<Math::Complex i Re Im rho theta arg cplx cplxe>
 functions / constants into your package.
@@ -822,6 +993,39 @@ a variable, even after collapse.
 The default is for collapsed states to be destroyed, to alter this
 behaviour, set the C<$Quantum::Entanglement::destroy> variable to
 a false value.  In general though, you can leave this alone.
+
+=head2 Breaking this behaviour
+
+Although not the default, it is possible to cause observation (for
+boolean context or with comparison operators only) to act in a more
+purposeful manner.  If the variable:
+
+ $Quantum::Entanglement::conform
+
+has a true value, then the overloaded operations provided by this
+module will try their very best to return "truth" instead of
+selecting randomly from both "true" and "false" outcomes.
+
+For example:
+
+ $foo = entangle(1,0,1,1,1,3); # foo = |0> + |1> + |3>
+ $Quantum::Entanglement::conform = 1;
+ print "\$foo > 0\n" if $foo > 0;
+                               # foo now = |1> + |3>
+ print "\$foo == 3\n" if $foo == 3;
+                               # foo now = |3>
+
+will always output:
+
+ $foo > 0
+ $foo == 3
+
+Of course, setting this variable somewhat defeats the point of
+the module, but it could lead to some interesting pre-calculating
+algorithms which are fed with entangled input, which is then
+later defined (by testing ==, say )with the answer of the calculation
+appearing as if by magic in some other variable.  See also the
+section L<save_state>.
 
 =head2 p_op
 
@@ -956,7 +1160,7 @@ This corresponds to the following:
 
  root_not( foo )
 
- foo is not in state: sqrt(2)i |0> + sqrt(2) |1>
+ foo is now in state: sqrt(2)i |0> + sqrt(2) |1>
 
  root_not (foo)
 
@@ -968,6 +1172,29 @@ This corresponds to the following:
 
 Neat, huh?
 
+=head2 save_state
+
+Having set up a load of entangled variables, you might wish to
+store their superposed state for later restoration.  This is acheived
+using the C<save_state> function:
+
+ $state = save_state( [list of entangled variables] );
+
+To restore the states of the entangled variables, simply call
+the C<restore_state> method on the C<$state>:
+
+  ($foo, $bar) = $state->restore_state;
+
+Once a state is restored, all other entangled variables will loose
+their values, so make sure that your save_state with everything you
+might want to use later.
+
+Multiple different states can be saved and restored independently,
+but only one set of global states can be active at once, if a little
+caution is applied, this should not cause any problems.
+
+See the demo calc_cache for an example of use.
+
 =head2 Quantum::Entanglement::show_states
 
 This can be called to give you a peak into the internal state space used
@@ -976,7 +1203,7 @@ so do not expect this to make any sense.
 
 =head1 EXPORT
 
-This module exports quite a bit, C<entangle>,
+This module exports quite a bit, C<entangle>, C<save_state>,
 C<p_op>, C<p_func> and C<q_logic>.  If used with qw(:complex) it will
 also export the following functions / constants from the Math::Complex
 module: C<i Re Im rho theta arg cplx cplxe>.
@@ -996,7 +1223,7 @@ L<http://xxx.lanl.gov/abs/math.HO/9911150>
       David Deutsch, Artur Ekert, Rossella Lupacchini.
 
 A slightly cheating version of Shor's algorithm for
-factoring numbers is provided as ~/demo/shor.pl .
+factoring numbers is provided as C<~/demo/shor.pl>.
 
 =head1 BUGS
 

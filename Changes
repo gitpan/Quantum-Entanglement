@@ -1,15 +1,36 @@
 Revision history for Perl extension Quantum::Entanglement.
 
-0.20 - Fri Jan 19 2001 13:00:00
+0.22 - Tue Jan 23 2001 14:00:00
 
-           + root_not demo and explaination
+Changes    + (int) under normal conditions, states will occasionally be
+             rationalised so that only unique states are left in the
+             state space.
+
+BUGFIXES   (int) internal changes to avoid memory leaking when destroying
+             previously saved states
+
+0.21 - Mon Jan 22 2001 20:00:00
+
+Changes    + (int) DESTRUCT method, to remove inaccesable states.
+           + (int) more sane way of keeping vars in touch with their values
+           + save_state and restore_state
+           + added "strive to be true" type of collapse
+           + ~/demo/calc_cache.pl demo of above
+
+BUGFIXES   bioop causing deep recursion though missing 2 on a var.
+
+0.20 - Fri Jan 19 2001 13:00:00
+  \--> Initial CPAN upload
+
+Changes    + root_not demo
            + :complex so that you don't need to say use Math::Complex as well
-           ~ removed all the compile time eval fun
+           ~ (int) probs stored internally as "numbers", M::C takes care of im
+           ~ (int) removed all the compile time eval fun
            - can no longer seed states with annon arrays, must use M::C
 
 0.11 - Tue Jan 16 2001 20:00:00
 
-Changes    + compilation evals sanity checked, those in run time left
+Changes    + (int) compilation evals sanity checked, those in run time left
              alone.
            + general internal clean up
 
@@ -33,7 +54,7 @@ BUGFIXES   Various reasons why the module didn't compile on some systems
 
 Changes    + q_logic can act on more than one variable at a time
            + Documentation now up to date
-           + probability now stored internally as Math::Complex numbers
+           + (int) probability now stored internally as Math::Complex numbers
            + entangle can be called with Math::Complex numbers
            ~ show_states not exported
 

@@ -4,4 +4,5 @@ MANIFEST
 Entanglement.pm
 demo/shor.pl
 demo/root_not.pl
+demo/calc_cache.pl
 test.pl
