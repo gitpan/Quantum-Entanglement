@@ -1,0 +1,53 @@
+Revision history for Perl extension Quantum::Entanglement.
+
+0.20 - Fri Jan 19 2001 13:00:00
+
+           + root_not demo and explaination
+           + :complex so that you don't need to say use Math::Complex as well
+           ~ removed all the compile time eval fun
+           - can no longer seed states with annon arrays, must use M::C
+
+0.11 - Tue Jan 16 2001 20:00:00
+
+Changes    + compilation evals sanity checked, those in run time left
+             alone.
+           + general internal clean up
+
+BUGFIXES   '~' is not a binary operator !!!
+
+0.10 - Tue Jan 16 2001 00:30:00
+
+Changes    + Documentation padded out with general info and more examples
+           + shor.pl prints out more information
+
+0.04 - Mon Jan 15 2001 01:00:00
+
+Changes    + ability to change way in which collapsed states are treated
+             by setting $Quantum::Entanglement::destroy
+           + first version of shor.pl, for factoring numbers
+
+BUGFIXES   Various reasons why the module didn't compile on some systems
+           Makefile.PL horribly b0rked
+
+0.03 - Sun Jan 14 2001 01:00:00
+
+Changes    + q_logic can act on more than one variable at a time
+           + Documentation now up to date
+           + probability now stored internally as Math::Complex numbers
+           + entangle can be called with Math::Complex numbers
+           ~ show_states not exported
+
+BUGFIXES:  bool not returning false if all states false
+
+0.02 - Sat Jan 13 2001 03:00:00
+
+Changes:   + Internal structure made better, probability now sticks to
+           states in a more sensible way.
+           + q_logic function, so that I could write a root-not logic gate.
+
+BUGFIXES:  probability now works
+
+
+0.01 - Fri Jan 12 2001 19:00:00
+
+Initial archived version pending major rewrite

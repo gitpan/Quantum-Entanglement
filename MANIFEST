@@ -1,0 +1,7 @@
+Changes
+Makefile.PL
+MANIFEST
+Entanglement.pm
+demo/shor.pl
+demo/root_not.pl
+test.pl
