@@ -1,5 +1,8 @@
 Revision history for Perl extension Quantum::Entanglement.
 
+0.32 - Wed Jun  5 17:43:42 BST 2002
+Changes    ~ added test suite
+
 0.31 -
 BUGFIXES:  Warnings in some eval()s removed.
            -- was doing ++

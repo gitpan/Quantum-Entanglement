@@ -8,7 +8,7 @@ BEGIN {
   use Math::Complex;
   my @M_Complex = qw(i Re Im rho theta arg cplx cplxe);
   our ($VERSION, @ISA, @EXPORT, @EXPORT_OK, %EXPORT_TAGS);
-  $VERSION     = 0.31;
+  $VERSION     = 0.32;
   @ISA         = qw(Exporter);
   @EXPORT      = qw(&entangle &p_op &p_func &q_logic
 		    &save_state &restore_state);
@@ -1254,7 +1254,7 @@ module: C<i Re Im rho theta arg cplx cplxe>.
 
 =head1 AUTHOR
 
-Alex Gough (F<alex@rcon.org>).  Any comments, suggestions or bug
+Alex Gough (F<alex@earth.li>).  Any comments, suggestions or bug
 reports are warmly welcomed.
 
 =head1 SEE ALSO
@@ -1267,7 +1267,8 @@ L<http://xxx.lanl.gov/abs/math.HO/9911150>
       David Deutsch, Artur Ekert, Rossella Lupacchini.
 
 Various examples are provided in the C<~/demo/> directory of the
-distribution.
+distribution.  An article on the module is available at
+L<http://the.earth.li/~alex/quant_ent.html>.
 
 =head1 BUGS
 
@@ -1321,8 +1322,8 @@ longer a problem.
 
 =head1 COPYRIGHT
 
-This code is copyright (c) Alex Gough, 2001.  All Rights Reserved.
-This module is free software.  It may be used, redistributed
-and/or modified under the same terms as perl itself.
+This code is copyright (c) Alex Gough, 2001,2002.  All Rights
+Reserved.  This module is free software.  It may be used,
+redistributed and/or modified under the same terms as Perl itself.
 
 =cut
